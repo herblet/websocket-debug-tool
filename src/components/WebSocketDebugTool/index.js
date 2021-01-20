@@ -1,12 +1,11 @@
 import React from 'react';
 import {Form, Icon, Input, Button, Checkbox} from 'antd';
 import SockJS from 'sockjs-client';
-import StompJS from 'stompjs/lib/stomp.js';
+import { Client as StompClient, Message as StompMessage } from "@stomp/stompjs";
 import './index.less';
 
 const FormItem = Form.Item;
 const CheckboxGroup = Checkbox.Group;
-const Stomp = StompJS.Stomp;
 
 /**
  * 用于调试websocket的一个小工具, 支持sockjs和stomp
@@ -41,29 +40,45 @@ class WebSocketDebugTool extends React.PureComponent {
       // 对于STOMP和非STOMP要分别处理
       // sockjs和raw websocket的API是一样的
       if (this.state.stomp) {
+        client = new StompClient();
+
         if (this.state.sockjs) {
-          client = Stomp.over(new SockJS(this.state.url));
+          client.webSocketFactory = function () {
+            return new SockJS(that.state.url);
+          };
         } else {
-          client = Stomp.over(new WebSocket(this.state.url));
+          client.webSocketFactory = function () {
+            return new WebSocket(that.state.url);
+          };
         }
 
         let connectHeader = {};
         // header必须是个正确的json
         if (this.state.stompConnectHeader.length !== 0) {
           try {
-            connectHeader = JSON.parse(this.state.stompConnectHeader)
+            connectHeader = JSON.parse(this.state.stompConnectHeader);
           } catch (e) {
-            console.error('parse STOMP connect header error %o', e);
-            this.error(`STOMP connect header format error: ${this.state.stompConnectHeader}`);
+            console.error("parse STOMP connect header error %o", e);
+            this.error(
+              `STOMP connect header format error: ${this.state.stompConnectHeader}`
+            );
             return;
           }
         }
 
-        client.connect(connectHeader, () => {
-          that.setState({connected: true});
-          that.info(`Connect STOMP server success, url = ${that.state.url}, connectHeader = ${that.state.stompConnectHeader}`)
-        });
+        if (!connectHeader["host"]) {
+          connectHeader["host"] = new URL(that.state.url).hostname;
+        }
 
+        client.connectHeaders = connectHeader;
+        client.onConnect = (frame) => {
+          that.setState({ connected: true });
+          that.info(
+            `Connect STOMP server success, url = ${that.state.url}, connectHeader = ${this.state.stompConnectHeader}`
+          );
+        };
+
+        client.activate();
       } else {
         if (this.state.sockjs) {
           client = new SockJS(this.state.url);
@@ -146,8 +161,14 @@ class WebSocketDebugTool extends React.PureComponent {
           }
         }
 
-        this.client.send(this.state.stompSendDestination, headerJSON, this.state.messageContent);
-        this.info(`send STOMP message, destination = ${this.state.stompSendDestination}, content = ${this.state.messageContent}, header = ${this.state.stompSendHeader}`);
+        this.client.publish(
+          this.state.stompSendDestination,
+          headerJSON,
+          this.state.messageContent
+        );
+        this.info(
+          `send STOMP message, destination = ${this.state.stompSendDestination}, content = ${this.state.messageContent}, header = ${this.state.stompSendHeader}`
+        );
       } else {
         this.client.send(this.state.messageContent);
         this.info(`send message, content = ${this.state.messageContent}`);
